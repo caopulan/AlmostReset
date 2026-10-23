@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>AlmostReset — outlined monochrome button</title>
+  <desc>A single-ink button icon with a gently stepped cylindrical silhouette, sparse diagonal stripes and transparent separation. Set currentColor for dark or light backgrounds.</desc>
+  <defs>
+    <clipPath id="top"><path d="M149 419 Q145 406 162 396 L499 225 Q512 218 527 225 L864 396 Q882 405 875 420 L528 600 Q513 609 497 601Z"/></clipPath>
+    <mask id="base-cutouts" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <g clip-path="url(#top)" stroke="black" stroke-width="37">
+        <path d="M-60 305 L930 807 M34 260 L1024 762 M128 215 L1118 717 M222 170 L1212 672 M316 125 L1306 627"/>
+      </g>
+      <path d="M150 419 L498 599 Q512 607 527 599 L875 419" stroke="black" stroke-width="16" stroke-linejoin="round"/>
+      <path d="M512 610 L512 820" stroke="black" stroke-width="12" stroke-linecap="round"/>
+      <path d="M366 270 C366 232 431 201 512 201 C593 201 658 232 658 270 L658 319 C658 337 648 339 648 356 L648 411 C648 448 587 478 512 478 C437 478 376 448 376 411 L376 356 C376 339 366 337 366 319Z" fill="black" stroke="black" stroke-width="27" stroke-linejoin="round"/>
+    </mask>
+    <mask id="button-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <!-- One inset arc suggests the top surface, without cutting the silhouette into rings. -->
+      <path d="M390 296 C414 320 461 335 512 335 C563 335 610 320 634 296" stroke="black" stroke-width="13" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <g fill="currentColor">
+    <path mask="url(#base-cutouts)" d="M148 410 Q146 402 162 396 L499 225 Q512 218 527 225 L864 396 Q879 403 877 416 L877 641 Q877 659 860 668 L529 840 Q512 849 496 840 L166 670 Q148 660 148 641Z"/>
+    <path d="M149 419 Q145 406 162 396 L499 225 Q512 218 527 225 L864 396 Q882 405 875 420" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path mask="url(#button-cutout)" d="M366 270 C366 232 431 201 512 201 C593 201 658 232 658 270 L658 319 C658 337 648 339 648 356 L648 411 C648 448 587 478 512 478 C437 478 376 448 376 411 L376 356 C376 339 366 337 366 319Z"/>
+  </g>
+</svg>

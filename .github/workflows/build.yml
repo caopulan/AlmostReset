@@ -1,0 +1,49 @@
+name: Build macOS app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Test
+        run: swift test
+
+      - name: Build application
+        run: ./scripts/build-app.sh
+
+      - name: Archive application
+        run: ditto -c -k --sequesterRsrc --keepParent dist/AlmostReset.app "dist/AlmostReset-macos-${RUNNER_ARCH}.zip"
+
+      - name: Upload application
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: AlmostReset-macos-${{ runner.arch }}.zip
+          path: dist/AlmostReset-macos-${{ runner.arch }}.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
