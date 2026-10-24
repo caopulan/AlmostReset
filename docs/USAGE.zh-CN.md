@@ -78,7 +78,7 @@ none < minimal < low < medium < high < xhigh < max < ultra
 将 DMG 和同一 Release 的校验文件放在同一目录后执行：
 
 ```bash
-shasum -a 256 -c AlmostReset-0.7.2-macOS-arm64.dmg.sha256
+shasum -a 256 -c AlmostReset-0.7.3-macOS-arm64.dmg.sha256
 ```
 
 退出旧版后替换应用即可更新。不要在正在执行规则时替换应用。重新打开后，确认连接和预览，再按需启动下一轮监听。
