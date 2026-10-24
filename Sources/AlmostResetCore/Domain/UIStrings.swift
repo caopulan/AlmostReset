@@ -19,6 +19,7 @@ public enum UIStrings {
         "Usage and sessions refreshed": "用量及会话刷新于",
         "Not refreshed yet": "尚未完成刷新",
         "Weekly usage": "周用量",
+        "Last known": "上次读数",
         "Dashboard": "主界面",
         "Affected": "受影响",
         "Resume": "继续",

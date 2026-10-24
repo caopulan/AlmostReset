@@ -20,7 +20,9 @@ enum AppPage: String, CaseIterable {
     }
     @Published var sessions: [Session] = []
     @Published var models: [CodexModel] = []
-    @Published var quota: QuotaSnapshot?
+    @Published private var quotaDisplay = QuotaDisplayState()
+    var quota: QuotaSnapshot? { quotaDisplay.snapshot }
+    var isQuotaStale: Bool { quotaDisplay.isStale }
     @Published var connection = CodexConnection(status: .disconnected, title: "Connecting", detail: "")
     @Published var rules: [AutomationRule] = []
     @Published var logs: [AutomationLogEntry] = []
@@ -52,6 +54,8 @@ enum AppPage: String, CaseIterable {
     private var connectionGeneration = 0
     private var searchGeneration = 0
     private var pollingTask: Task<Void, Never>?
+    private var recoveryTask: Task<Void, Never>?
+    private var recovery = RefreshRecovery()
     private var saveTask: Task<Void, Never>?
 
     init() {
@@ -100,32 +104,56 @@ enum AppPage: String, CaseIterable {
     func refresh() async {
         guard !isRefreshing, !isExecuting else { return }
         isRefreshing = true
+        // A SwiftUI .task is cancelled when its window/popover disappears. The
+        // application owns this read so closing a view cannot cancel recovery.
+        await Task { await self.performRefresh() }.value
+    }
+
+    private func performRefresh() async {
         let generation = connectionGeneration
         let backend = service
         defer { isRefreshing = false }
         do {
-            resolvedCLIPath = nil
             resolvedCLIPath = try CodexService.resolveExecutable(cliPath.isEmpty ? nil : cliPath)
             let snapshot = try await backend.refresh()
             guard generation == connectionGeneration else { return }
             sessions = snapshot.sessions
-            quota = snapshot.quota; models = snapshot.models; connection = snapshot.connection
-            if snapshot.quota != nil { lastUsageAndSessionsRefresh = snapshot.fetchedAt }
+            let hasFreshQuota = quotaDisplay.receive(snapshot.quota)
+            models = snapshot.models; connection = snapshot.connection
+            if hasFreshQuota { lastUsageAndSessionsRefresh = snapshot.fetchedAt }
             lastRefresh = snapshot.fetchedAt; warnings = snapshot.warnings; errorMessage = nil
             connectionChecked = true
-            guard persistenceReady, let freshQuota = snapshot.quota else {
-                if snapshot.quota == nil { errorMessage = snapshot.warnings.first(where: { $0.hasPrefix("Usage:") }) ?? L("Usage unavailable") }
+            guard hasFreshQuota, let freshQuota = snapshot.quota else {
+                errorMessage = snapshot.warnings.first(where: { $0.hasPrefix("Usage:") }) ?? L("Usage unavailable")
+                scheduleReadRecovery()
                 return
             }
+            recovery.reset()
+            recoveryTask?.cancel(); recoveryTask = nil
+            guard persistenceReady else { return }
             if let event = listener.observe(freshQuota) {
                 await executeReset(event)
             } else if listener.isListening {
                 persist()
             }
         } catch {
+            guard generation == connectionGeneration else { return }
+            quotaDisplay.markUnavailable()
             connectionChecked = true
             errorMessage = error.localizedDescription
             connection = CodexConnection(status: .disconnected, title: "Disconnected", detail: error.localizedDescription)
+            scheduleReadRecovery()
+        }
+    }
+
+    private func scheduleReadRecovery() {
+        guard !listener.isListening, !isReconnecting, let delay = recovery.nextDelay() else { return }
+        recoveryTask?.cancel()
+        let generation = connectionGeneration
+        recoveryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, generation == self.connectionGeneration, !self.isExecuting else { return }
+            await self.refresh()
         }
     }
 
@@ -272,6 +300,8 @@ enum AppPage: String, CaseIterable {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
         }
         connectionGeneration += 1
+        recoveryTask?.cancel(); recoveryTask = nil; recovery.reset()
+        quotaDisplay = QuotaDisplayState(); lastUsageAndSessionsRefresh = nil
         UserDefaults.standard.set(cliPath, forKey: "cliPath")
         resolvedCLIPath = nil; connectionChecked = false
         service = CodexService(configuration: CodexConfiguration(cliPath: cliPath.isEmpty ? nil : cliPath))

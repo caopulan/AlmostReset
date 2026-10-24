@@ -8,7 +8,7 @@ import AlmostResetCore
             MonitorStatusBar(portrait: true).id(app.language).environmentObject(app).tint(.accent)
         } label: {
             Image(nsImage: BrandArtwork.menuImage).renderingMode(.template)
-            Text(app.mainWindows.first?.remainingPercent.map { "\(Int($0))%" } ?? "—")
+            Text(app.mainWindows.first?.remainingPercent.map { (app.isQuotaStale ? "~" : "") + "\(Int($0))%" } ?? "—")
         }.menuBarExtraStyle(.window)
         Window("AlmostReset", id: "main") {
             MainWindow().id(app.language).environment(\.locale, Locale(identifier: app.language.rawValue)).environmentObject(app).tint(.accent).task { await app.start() }

@@ -64,7 +64,7 @@ struct MonitorStatusBar: View {
         HStack(spacing: 18) {
             if app.mainWindows.isEmpty { quotaRing(nil, label: L("Usage unavailable")) }
             ForEach(Array(app.mainWindows.prefix(2))) { window in
-                quotaRing(window.remainingPercent, label: window.friendlyName == "Weekly" ? L("Weekly usage") : L(window.friendlyName) + " " + L("Usage"))
+                quotaRing(window.remainingPercent, label: app.isQuotaStale ? L("Last known") : window.friendlyName == "Weekly" ? L("Weekly usage") : L(window.friendlyName) + " " + L("Usage"))
             }
         }.frame(maxWidth: .infinity)
     }
