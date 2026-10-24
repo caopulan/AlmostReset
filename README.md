@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/caopulan/AlmostReset/releases/latest"><img src="https://img.shields.io/badge/版本-0.7.5-E65A28" alt="版本 0.7.5"></a>
+  <a href="https://github.com/caopulan/AlmostReset/releases/latest"><img src="https://img.shields.io/badge/版本-0.8.0-E65A28" alt="版本 0.8.0"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-555555" alt="macOS 14 及以上">
   <img src="https://img.shields.io/badge/架构-Apple%20Silicon-555555" alt="Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/协议-MIT-555555" alt="MIT 协议"></a>
@@ -49,13 +49,19 @@ AlmostReset 当前是一款面向 **Codex** 的独立 macOS 应用。你在 Code
 
 ## 📦 安装
 
-从 [GitHub Releases](https://github.com/caopulan/AlmostReset/releases/latest) 下载 **AlmostReset-0.7.5-macOS-arm64.dmg**，打开后将 **AlmostReset.app** 拖入 **Applications**。
+从 [GitHub Releases](https://github.com/caopulan/AlmostReset/releases/latest) 下载 **AlmostReset-0.8.0-macOS-arm64.dmg**，打开后将 **AlmostReset.app** 拖入 **Applications**。
 
 需要 **macOS 14 或更高版本、Apple Silicon Mac**，以及已安装并登录的 Codex CLI。控制 Codex 桌面端会话时，请保持 Codex 桌面应用运行。应用会自动寻找 CLI；设置页显示连接成功后，无需手动选择路径。
 
 当前发布包采用本地临时签名，**尚未经过 Apple Developer ID 签名和公证**。如果首次打开被系统拦截，请先确认下载来源，再按照 [Apple 官方说明](https://support.apple.com/zh-cn/102445)操作。
 
 更新前退出旧版，再替换应用。已保存的规则保留；重新打开后监听处于待启动状态。
+
+### 应用内更新
+
+从 0.8.0 起，应用默认在启动后检查更新，并每小时自动检查一次。发现正式版后会下载、验证签名，在空闲时安装并重启，保留规则和设置。监听重置、执行动作、刷新或保存规则期间会延后安装。可在「设置 → 应用更新」关闭自动更新，或点击「检查更新」。
+
+0.7.x 需先手动安装一次 0.8.0，之后即可使用自动更新。安装位置没有写入权限时，系统可能要求授权。更新后的应用仍以待启动状态打开。
 
 ## 🚀 安排一次重置前的集中执行
 
@@ -119,4 +125,4 @@ DMG 脚本使用已构建的 `dist/AlmostReset.app`，输出安装镜像与 SHA-
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Pu Cao。
+[MIT](LICENSE) © 2026 Pu Cao。更新组件使用 [Sparkle](https://sparkle-project.org/)，其许可声明随应用分发，并保存在 [licenses/Sparkle-LICENSE.txt](licenses/Sparkle-LICENSE.txt)。

@@ -92,6 +92,7 @@ struct SettingsPage: View {
                 .frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             ScrollView {
                 VStack(spacing: 18) {
+                    if app.updates.available { UpdateSettingsView(updater: app.updates) }
                     Panel {
                         VStack(spacing: 22) {
                             settingRow("Language") {

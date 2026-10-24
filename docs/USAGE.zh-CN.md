@@ -80,7 +80,19 @@ none < minimal < low < medium < high < xhigh < max < ultra
 将 DMG 和同一 Release 的校验文件放在同一目录后执行：
 
 ```bash
-shasum -a 256 -c AlmostReset-0.7.5-macOS-arm64.dmg.sha256
+shasum -a 256 -c AlmostReset-0.8.0-macOS-arm64.dmg.sha256
 ```
 
 退出旧版后替换应用即可更新。不要在正在执行规则时替换应用。重新打开后，确认连接和预览，再按需启动下一轮监听。
+
+## 应用内更新
+
+0.8.0 起默认自动检查并安装正式版：启动后检查一次，此后每小时检查。更新列表与 ZIP 都用 Ed25519 签名验证，安装前验证下载内容；校验不通过不会安装。设置页和应用菜单均提供「检查更新」。
+
+监听重置、执行动作、刷新数据或保存规则时，更新先下载等待，空闲后保存状态、安装并重启。默认不恢复规则监听。关闭「自动检查并安装更新」后，可以手动检查；没有安装目录写入权限时可能需要系统授权。
+
+### 维护者发布更新
+
+更新 `scripts/build-app.sh` 中的版本与递增构建号，运行 `./scripts/check.sh`、`./scripts/build-app.sh`、`./scripts/build-dmg.sh` 和 `./scripts/build-appcast.sh`。最后一个脚本生成签名 ZIP 与签名更新列表；私钥保存在 macOS 钥匙串的 `com.caopulan.AlmostReset.updates` 账号中，不应导出或提交到仓库。
+
+提交版本与构建号变更后，可用 `./scripts/publish-release.sh <更新说明文件>` 完成检查、打包、签名和发布。脚本先把 DMG、ZIP 和校验文件上传到对应 GitHub Release，再发布签名的 `updates/appcast.xml`。更新列表引用的版本和附件必须与发布包一致。签名后的 XML 不能再手工编辑，修改后需重新签名。`updates/public-key.txt` 是可公开分发的验证公钥。

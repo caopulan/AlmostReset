@@ -34,6 +34,13 @@ mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources" "$iconset_dir"
 cp "$build_dir/AlmostReset" "$contents_dir/MacOS/AlmostReset"
 chmod 755 "$contents_dir/MacOS/AlmostReset"
 
+# Embed Sparkle and its signed helper services; use a bundle-relative runtime path.
+sparkle_root="$project_dir/.build/artifacts/sparkle/Sparkle"
+mkdir -p "$contents_dir/Frameworks"
+ditto "$sparkle_root/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" "$contents_dir/Frameworks/Sparkle.framework"
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$contents_dir/MacOS/AlmostReset"
+cp "$sparkle_root/LICENSE" "$contents_dir/Resources/Sparkle-LICENSE.txt"
+
 # Resize copies only; keep the imagegen source at its original resolution.
 for size in 16 32 128 256 512; do
     sips -s format png -z "$size" "$size" "$icon_source" \
@@ -64,15 +71,22 @@ cat > "$contents_dir/Info.plist" <<'PLIST'
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>AlmostReset</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.7.5</string>
-    <key>CFBundleVersion</key><string>12</string>
+    <key>CFBundleShortVersionString</key><string>0.8.0</string>
+    <key>CFBundleVersion</key><string>13</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>SUFeedURL</key><string>https://raw.githubusercontent.com/caopulan/AlmostReset/main/updates/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUAutomaticallyUpdate</key><true/>
+    <key>SUScheduledCheckInterval</key><integer>3600</integer>
+    <key>SUVerifyUpdateBeforeExtraction</key><true/>
+    <key>SURequireSignedFeed</key><true/>
 </dict>
 </plist>
 PLIST
+/usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $(cat "$project_dir/updates/public-key.txt")" "$contents_dir/Info.plist"
 plutil -lint "$contents_dir/Info.plist"
 codesign --force --sign - "$staged_app"
 codesign --verify --deep --strict "$staged_app"

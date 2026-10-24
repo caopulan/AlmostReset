@@ -12,6 +12,7 @@ enum AppPage: String, CaseIterable {
 }
 
 @MainActor final class AppModel: ObservableObject {
+    static let shared = AppModel()
     @Published var pendingRuleID: UUID?
     @Published var presentedRuleID: UUID?
     @Published var page: AppPage = .rules
@@ -28,6 +29,8 @@ enum AppPage: String, CaseIterable {
     @Published var logs: [AutomationLogEntry] = []
     @Published var isRefreshing = false
     @Published var isExecuting = false
+    @Published var isInstallingUpdate = false
+    @Published private(set) var isSavingRules = false
     @Published var activeEventID: UUID?
     @Published var errorMessage: String?
     @Published var storageError: String?
@@ -43,10 +46,11 @@ enum AppPage: String, CaseIterable {
     @Published var runFailed = 0
     @Published var runMatched = 0
     var monitoring: Bool { listener.isListening }
-    var canStart: Bool { canEditRules && storageError == nil && !isExecuting && !isReconnecting && resolvedCLIPath != nil }
+    var canStart: Bool { canEditRules && storageError == nil && !isExecuting && !isReconnecting && !isInstallingUpdate && resolvedCLIPath != nil }
     @Published var pollInterval: Double
     @Published var cliPath: String
     @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
+    let updates = AppUpdater()
     private var service: CodexService
     private let persistence = AppPersistence()
     private var didStart = false
@@ -91,6 +95,7 @@ enum AppPage: String, CaseIterable {
             // Listening is always explicitly armed; legacy persistent monitoring is retired.
             UserDefaults.standard.removeObject(forKey: "monitoring")
         } catch { storageError = "Cannot load saved rules: \(error.localizedDescription)" }
+        updates.start(app: self)
         await refresh()
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -104,7 +109,7 @@ enum AppPage: String, CaseIterable {
     }
 
     func refresh() async {
-        guard !isRefreshing, !isExecuting else { return }
+        guard !isRefreshing, !isExecuting, !isInstallingUpdate else { return }
         isRefreshing = true
         // A SwiftUI .task is cancelled when its window/popover disappears. The
         // application owns this read so closing a view cannot cancel recovery.
@@ -171,6 +176,16 @@ enum AppPage: String, CaseIterable {
             guard let self, generation == self.connectionGeneration, !self.isExecuting else { return }
             await self.refresh()
         }
+    }
+
+    var canInstallAppUpdate: Bool {
+        UpdateInstallationPolicy.canInstall(listening: listener.isListening, executing: isExecuting,
+            refreshing: isRefreshing, reconnecting: isReconnecting, storageReady: persistenceReady && storageError == nil, writingRules: isSavingRules)
+    }
+    func prepareForAppUpdate() async -> Bool {
+        guard canInstallAppUpdate else { return false }
+        guard await checkpoint() else { return false }
+        return canInstallAppUpdate
     }
 
     func startListening() {
@@ -245,6 +260,9 @@ enum AppPage: String, CaseIterable {
     }
 
     func saveRule(_ rule: AutomationRule) async -> Bool {
+        guard !isInstallingUpdate else { return false }
+        isSavingRules = true
+        defer { isSavingRules = false }
         guard persistenceReady else { storageError = "Saved data is unavailable. Your existing rules have been preserved."; return false }
         let previousRules = rules
         if let index = rules.firstIndex(where: { $0.id == rule.id }) { rules[index] = rule }
@@ -253,20 +271,24 @@ enum AppPage: String, CaseIterable {
         rules = previousRules
         return false
     }
-    func deleteRule(_ id: UUID) { rules.removeAll { $0.id == id }; persist() }
+    func deleteRule(_ id: UUID) { guard !isInstallingUpdate else { return }; rules.removeAll { $0.id == id }; persist() }
     func duplicateRule(_ rule: AutomationRule) {
+        guard !isInstallingUpdate else { return }
         var copy = rule; copy.id = UUID(); copy.enabled = false
         rules.append(copy); persist()
     }
     func toggleRule(_ id: UUID, _ enabled: Bool) {
+        guard !isInstallingUpdate else { return }
         guard let index = rules.firstIndex(where: { $0.id == id }) else { return }
         rules[index].enabled = enabled; persist()
     }
     func moveRule(_ id: UUID, direction: Int) {
+        guard !isInstallingUpdate else { return }
         guard let index = rules.firstIndex(where: { $0.id == id }), rules.indices.contains(index + direction) else { return }
         rules.swapAt(index, index + direction); persist()
     }
     func moveRule(_ draggedID: UUID, before target: UUID) {
+        guard !isInstallingUpdate else { return }
         guard draggedID != target, let start = rules.firstIndex(where: { $0.id == draggedID }), let end = rules.firstIndex(where: { $0.id == target }) else { return }
         rules.move(fromOffsets: IndexSet(integer: start), toOffset: end > start ? end + 1 : end); persist()
     }
@@ -308,7 +330,7 @@ enum AppPage: String, CaseIterable {
         sessions = byID.values.sorted { $0.updatedAt > $1.updatedAt }
     }
     func reconnect() async {
-        guard !isReconnecting else { return }
+        guard !isReconnecting, !isInstallingUpdate else { return }
         isReconnecting = true
         defer { isReconnecting = false }
         if listener.isListening { stopListening() }
