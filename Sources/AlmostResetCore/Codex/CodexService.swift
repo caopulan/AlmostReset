@@ -254,7 +254,9 @@ public actor CodexService {
                 identity = "account:" + SHA256.hash(data: Data(email.lowercased().utf8)).map { String(format: "%02x", $0) }.joined()
             }
         }
-        guard let identity, !identity.isEmpty else { return nil }
+        guard let identity, !identity.isEmpty else {
+            throw CodexError.unavailable("Codex returned no account identity for the usage reading.")
+        }
         let buckets = response.object("rateLimitsByLimitId")
         var windows: [QuotaWindow] = []
         let values: [(String, [String: Any])] = buckets.isEmpty ? [(response.object("rateLimits").string("limitId") ?? "codex", response.object("rateLimits"))] : buckets.compactMap { key, value in (value as? [String: Any]).map { (key, $0) } }
@@ -269,6 +271,9 @@ public actor CodexService {
                 } else { label = bucket.string("limitName") ?? id }
                 windows.append(QuotaWindow(limitID: id, windowDurationMins: duration, usedPercent: window.number("usedPercent"), resetsAt: window.number("resetsAt").map(Date.init(timeIntervalSince1970:)), label: label))
             }
+        }
+        guard windows.contains(where: { $0.remainingPercent != nil }) else {
+            throw CodexError.protocolError("Codex returned no valid quota windows.")
         }
         return QuotaSnapshot(accountID: identity, sourceID: "local:" + URL(fileURLWithPath: configuration.codexHome).standardizedFileURL.path, windows: windows)
     }

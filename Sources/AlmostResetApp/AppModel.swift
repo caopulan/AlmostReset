@@ -56,6 +56,7 @@ enum AppPage: String, CaseIterable {
     private var pollingTask: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
     private var recovery = RefreshRecovery()
+    private var lastRefreshFailure: String?
     private var saveTask: Task<Void, Never>?
 
     init() {
@@ -96,7 +97,8 @@ enum AppPage: String, CaseIterable {
                 guard let self else { return }
                 do { try await Task.sleep(for: .seconds(self.pollInterval)) } catch { return }
                 if Task.isCancelled { return }
-                if self.listener.isListening { await self.refresh() }
+                // Display refresh is independent of the one-shot action listener.
+                await self.refresh()
             }
         }
     }
@@ -125,8 +127,14 @@ enum AppPage: String, CaseIterable {
             connectionChecked = true
             guard hasFreshQuota, let freshQuota = snapshot.quota else {
                 errorMessage = snapshot.warnings.first(where: { $0.hasPrefix("Usage:") }) ?? L("Usage unavailable")
+                recordRefreshFailure(errorMessage ?? "Usage unavailable")
                 scheduleReadRecovery()
                 return
+            }
+            if lastRefreshFailure != nil {
+                lastRefreshFailure = nil
+                logs.append(AutomationLogEntry(kind: .info, message: "Usage refresh recovered"))
+                persist()
             }
             recovery.reset()
             recoveryTask?.cancel(); recoveryTask = nil
@@ -142,8 +150,16 @@ enum AppPage: String, CaseIterable {
             connectionChecked = true
             errorMessage = error.localizedDescription
             connection = CodexConnection(status: .disconnected, title: "Disconnected", detail: error.localizedDescription)
+            recordRefreshFailure(error.localizedDescription)
             scheduleReadRecovery()
         }
+    }
+
+    private func recordRefreshFailure(_ message: String) {
+        guard lastRefreshFailure != message else { return }
+        lastRefreshFailure = message
+        logs.append(AutomationLogEntry(kind: .failed, message: "Usage refresh failed: " + String(message.prefix(1_000))))
+        persist()
     }
 
     private func scheduleReadRecovery() {

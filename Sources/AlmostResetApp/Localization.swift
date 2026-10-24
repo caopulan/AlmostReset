@@ -10,6 +10,12 @@ func LF(_ key: String, _ arguments: CVarArg...) -> String {
 }
 /// Translate app-owned log fragments without changing user-authored titles or prompts.
 func localizedMessage(_ message: String) -> String {
+    if message.hasPrefix("Usage refresh failed: ") {
+        return L("Usage refresh failed") + ": " + localizedMessage(String(message.dropFirst("Usage refresh failed: ".count)))
+    }
+    if message.hasPrefix("Codex request timed out: ") {
+        return L("Codex request timed out") + ": " + String(message.dropFirst("Codex request timed out: ".count))
+    }
     if message.hasPrefix("Quota increased · ") {
         let details = String(message.dropFirst("Quota increased · ".count))
             .replacingOccurrences(of: "Weekly ", with: L("Weekly") + " ")

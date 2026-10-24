@@ -216,7 +216,9 @@ final class AppServerClient {
         try transport.send(["id": id, "method": method, "params": params])
         let deadline = Date().addingTimeInterval(timeout)
         while true {
-            let response = try transport.receive(deadline: deadline)
+            let response: [String: Any]
+            do { response = try transport.receive(deadline: deadline) }
+            catch CodexError.timeout { throw CodexError.timeout("Codex request timed out: " + method) }
             guard response.number("id") == Double(id) else { continue }
             if let error = response["error"] as? [String: Any] { throw CodexError.rpc(error.string("message") ?? "Codex rejected \(method).") }
             guard let result = response["result"] as? [String: Any] else { throw CodexError.protocolError("Missing result for \(method).") }
