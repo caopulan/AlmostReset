@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>AlmostReset</title>
+    <link>https://github.com/caopulan/AlmostReset/releases</link>
+    <description>AlmostReset 正式版更新</description>
+    <item>
+      <title>AlmostReset 0.8.0</title>
+      <pubDate>Sat, 24 Oct 2026 09:56:13 GMT</pubDate>
+      <sparkle:version>13</sparkle:version>
+      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description>AlmostReset 0.8.0：更新详情见 GitHub Releases。</description>
+      <enclosure url="https://github.com/caopulan/AlmostReset/releases/download/v0.8.0/AlmostReset-0.8.0-macOS-arm64.zip" length="3607577" type="application/octet-stream" sparkle:edSignature="Db/GDFiP0AnD7Qyt3j39TTRlJGJfTQ1/jMURvCA2djyZwOC3m3xJI+ZgadicaSy/OAl39YJZmPiArNSfQHhGDg=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: UXH1luHfT0AVcTdDC3l9+kUqsGuPhs+STz0SRbYIhdsL+EayJlad70IpRwLd1czwFOXq7lsRlbcAW/4kbYdXBg==
+length: 1251
+-->
