@@ -82,7 +82,7 @@ none < minimal < low < medium < high < xhigh < max < ultra
 将 DMG 和同一 Release 的校验文件放在同一目录后执行：
 
 ```bash
-shasum -a 256 -c AlmostReset-0.8.1-macOS-arm64.dmg.sha256
+shasum -a 256 -c AlmostReset-0.8.2-macOS-arm64.dmg.sha256
 ```
 
 退出旧版后替换应用即可更新。不要在正在执行规则时替换应用。重新打开后，确认连接和预览，再按需启动下一轮监听。
@@ -98,3 +98,13 @@ shasum -a 256 -c AlmostReset-0.8.1-macOS-arm64.dmg.sha256
 更新 `scripts/build-app.sh` 中的版本与递增构建号，运行 `./scripts/check.sh`、`./scripts/build-app.sh`、`./scripts/build-dmg.sh` 和 `./scripts/build-appcast.sh`。最后一个脚本生成签名 ZIP 与签名更新列表；私钥保存在 macOS 钥匙串的 `com.caopulan.AlmostReset.updates` 账号中，不应导出或提交到仓库。
 
 提交版本与构建号变更后，可用 `./scripts/publish-release.sh <更新说明文件>` 完成检查、打包、签名和发布。脚本先把 DMG、ZIP 和校验文件上传到对应 GitHub Release，再发布签名的 `updates/appcast.xml`。更新列表引用的版本和附件必须与发布包一致。签名后的 XML 不能再手工编辑，修改后需重新签名。`updates/public-key.txt` 是可公开分发的验证公钥。
+
+## 自动执行日志
+
+从 0.8.2 起，诊断日志自动保存到 `~/Library/Logs/AlmostReset/`，不需要在界面中开启。文件名为 `execution-YYYY-MM-DD.jsonl`；同一天达到大小上限时轮转为带唯一后缀的文件。
+
+每行一个 JSON 对象，时间为 UTC、精确到毫秒，包含应用版本、进程运行 ID 和重置事件 ID。记录覆盖启动／停止监听、周期读取摘要、重置时的目录与实时会话快照、补采结果、规则快照、计划、排除原因、命令发出与确认、最终汇总。快照只含会话 ID、标题、项目路径、状态、模型、推理强度、速度和控制能力；不保存对话正文或原始 IPC 数据。提示词只记录字节数和 SHA-256 摘要，常见凭据格式会脱敏。
+
+命令发送前先写入日志并同步到磁盘；如果存在 `command.started` 却没有后续确认或失败记录，应视为结果未知，不能直接重放命令。执行日志独立于界面中的 500 条简要活动记录。单文件上限 4 MiB，最多 8 个文件、保留不超过 14 天；清理在写入时执行，因此以先达到的限制为准。
+
+目录仅当前用户可访问，文件权限为 0600。日志包含任务标题和本机路径，分享前应检查内容。若日志无法写入，错误会进入 macOS 系统日志的 `com.caopulan.AlmostReset / execution-log` 分类，现有规则执行和界面不因此改变。旧版本未记录的信息无法补回。

@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Combine
 import ServiceManagement
+import OSLog
 import AlmostResetCore
 
 enum AppPage: String, CaseIterable {
@@ -26,7 +27,18 @@ enum AppPage: String, CaseIterable {
     var isQuotaStale: Bool { quotaDisplay.isStale }
     @Published var connection = CodexConnection(status: .disconnected, title: "Connecting", detail: "")
     @Published var rules: [AutomationRule] = []
-    @Published var logs: [AutomationLogEntry] = []
+    @Published var logs: [AutomationLogEntry] = [] {
+        didSet {
+            guard auditReady else { return }
+            let existing = Set(oldValue.map(\.id))
+            for entry in logs where !existing.contains(entry.id) {
+                var record = ExecutionRecord(kind: "activity." + entry.kind.rawValue, eventID: entry.eventID,
+                    sessionID: entry.sessionID, ruleID: entry.ruleID, message: entry.message)
+                record.id = entry.id; record.date = entry.date
+                audit(record)
+            }
+        }
+    }
     @Published var isRefreshing = false
     @Published var isExecuting = false
     @Published var isInstallingUpdate = false
@@ -53,6 +65,12 @@ enum AppPage: String, CaseIterable {
     let updates = AppUpdater()
     private var service: CodexService
     private let persistence = AppPersistence()
+    private let executionJournal = ExecutionJournal()
+    private let auditRunID = UUID()
+    private var auditReady = false
+    private var auditTask: Task<Void, Never>?
+    private var auditSensitiveTexts = Set<String>()
+    private let auditSystemLog = Logger(subsystem: "com.caopulan.AlmostReset", category: "execution-log")
     private var didStart = false
     private var persistenceReady = false
     private var connectionGeneration = 0
@@ -95,6 +113,8 @@ enum AppPage: String, CaseIterable {
             // Listening is always explicitly armed; legacy persistent monitoring is retired.
             UserDefaults.standard.removeObject(forKey: "monitoring")
         } catch { storageError = "Cannot load saved rules: \(error.localizedDescription)" }
+        auditReady = true
+        audit(ExecutionRecord(kind: "application.started", fields: ["listener": listener.phase.rawValue, "storageReady": String(persistenceReady)]))
         updates.start(app: self)
         await refresh()
         pollingTask = Task { [weak self] in
@@ -125,6 +145,7 @@ enum AppPage: String, CaseIterable {
             let snapshot = try await backend.refresh()
             guard generation == connectionGeneration else { return }
             let previousSessions = sessions
+            let previousCollectionDate = lastRefresh
             sessions = snapshot.sessions
             let hasFreshQuota = quotaDisplay.receive(snapshot.quota)
             models = snapshot.models; connection = snapshot.connection
@@ -132,6 +153,15 @@ enum AppPage: String, CaseIterable {
             lastRefresh = snapshot.fetchedAt; warnings = snapshot.warnings
             errorMessage = snapshot.collectionIssues.isEmpty ? nil : LF("%d sessions have unconfirmed live state", snapshot.collectionIssues.count)
             connectionChecked = true
+            var refreshFields = ["catalogCount": String(snapshot.sessions.count), "liveCount": String(snapshot.liveSessionIDs.count),
+                "unresolvedCount": String(snapshot.collectionIssues.count), "freshQuota": String(hasFreshQuota), "listener": listener.phase.rawValue]
+            for (index, warning) in snapshot.warnings.enumerated() { refreshFields["warning.\(index)"] = warning }
+            for window in snapshot.quota?.windows ?? [] { refreshFields["remaining.\(window.id)"] = window.remainingPercent.map(String.init(describing:)) ?? "unknown" }
+            audit(ExecutionRecord(kind: "refresh.completed", fields: refreshFields))
+            if listener.isListening {
+                let candidates = SessionCollection.auditCandidates(rules: rules, previous: previousSessions, current: snapshot.sessions)
+                auditCollection(snapshot, kind: "listener.collection", eventID: nil, only: candidates)
+            }
             guard hasFreshQuota, let freshQuota = snapshot.quota else {
                 errorMessage = snapshot.warnings.first(where: { $0.hasPrefix("Usage:") }) ?? L("Usage unavailable")
                 recordRefreshFailure(errorMessage ?? "Usage unavailable")
@@ -147,12 +177,13 @@ enum AppPage: String, CaseIterable {
             recoveryTask?.cancel(); recoveryTask = nil
             guard persistenceReady else { return }
             if let event = listener.observe(freshQuota) {
-                await executeReset(event, previousSessions: previousSessions, snapshot: snapshot)
+                await executeReset(event, previousSessions: previousSessions, previousCollectionDate: previousCollectionDate, snapshot: snapshot)
             } else if listener.isListening {
                 persist()
             }
         } catch {
             guard generation == connectionGeneration else { return }
+            audit(ExecutionRecord(kind: "refresh.failed", message: error.localizedDescription, fields: ["listener": listener.phase.rawValue]))
             quotaDisplay.markUnavailable()
             connectionChecked = true
             errorMessage = error.localizedDescription
@@ -194,6 +225,7 @@ enum AppPage: String, CaseIterable {
         guard canStart, !listener.isListening else { return }
         runSucceeded = 0; runFailed = 0; runMatched = 0
         listener.arm(baseline: nil)
+        audit(ExecutionRecord(kind: "listener.started", fields: ["generation": String(listener.generation), "pollIntervalSeconds": String(pollInterval)], rules: rules))
         logs.append(AutomationLogEntry(kind: .info, message: "One-time listening started"))
         persist()
         let generation = listener.generation
@@ -208,22 +240,33 @@ enum AppPage: String, CaseIterable {
 
     func stopListening() {
         guard listener.isListening || isExecuting else { return }
+        audit(ExecutionRecord(kind: "listener.stopped", eventID: activeEventID, fields: ["generation": String(listener.generation)]))
         listener.stop()
         logs.append(AutomationLogEntry(kind: .info, message: "Listening stopped"))
         persist()
     }
 
-    private func executeReset(_ event: QuotaResetEvent, previousSessions: [Session], snapshot: CodexSnapshot) async {
+    private func executeReset(_ event: QuotaResetEvent, previousSessions: [Session], previousCollectionDate: Date?, snapshot: CodexSnapshot) async {
         isExecuting = true
         activeEventID = event.id
         let generation = listener.generation
         let backend = service
         let eventRules = rules
+        var resetRecord = ExecutionRecord(kind: "reset.detected", eventID: event.id,
+            fields: ["detectedAt": event.detectedAt.ISO8601Format(), "generation": String(generation)], rules: eventRules)
+        resetRecord.quotaChanges = event.windows
+        audit(resetRecord)
+        auditCollection(snapshot, kind: "collection.initial", eventID: event.id)
+        audit(ExecutionRecord(kind: "collection.previous", eventID: event.id,
+            fields: ["collectedAt": previousCollectionDate?.ISO8601Format() ?? "unknown"],
+            sessions: previousSessions.filter { $0.isRecentOrRunning() }))
         var collected = snapshot
         var auditIDs = SessionCollection.auditCandidates(rules: eventRules, previous: previousSessions, current: snapshot.sessions)
         var recoveryIDs = Set(previousSessions.filter { session in eventRules.contains { $0.matches(session) } }.map(\.id))
         recoveryIDs.formUnion(auditIDs.intersection(snapshot.collectionIssues.keys))
         defer {
+            audit(ExecutionRecord(kind: "reset.finished", eventID: event.id, fields: ["planned": String(runMatched),
+                "succeeded": String(runSucceeded), "failuresOrIssues": String(runFailed), "cancelled": String(generation != listener.generation)]))
             isExecuting = false; activeEventID = nil
             listener.finish(generation: generation)
         }
@@ -238,7 +281,9 @@ enum AppPage: String, CaseIterable {
         if !collected.collectionIssues.isEmpty || !recoveryIDs.subtracting(collected.liveSessionIDs).isEmpty {
             logs.append(AutomationLogEntry(kind: .info, message: LF("Collection incomplete: %d unresolved; rechecking before planning", collected.collectionIssues.count), eventID: event.id))
             do {
+                audit(ExecutionRecord(kind: "collection.retry.started", eventID: event.id))
                 let retry = try await backend.refreshForReset(accountID: event.accountID, sourceID: event.sourceID)
+                auditCollection(retry, kind: "collection.retry.completed", eventID: event.id)
                 auditIDs.formUnion(SessionCollection.auditCandidates(rules: eventRules, previous: collected.sessions, current: retry.sessions))
                 collected = retry
                 recoveryIDs.formUnion(auditIDs.intersection(retry.collectionIssues.keys))
@@ -259,14 +304,24 @@ enum AppPage: String, CaseIterable {
             do {
                 let recovered = try await backend.resolve(deepLink: "codex://threads/" + id)
                 guard recovered.control.isAvailable else { throw CodexError.unavailable(recovered.control.unavailableReason ?? "No live owner") }
+                audit(ExecutionRecord(kind: "collection.target.recovered", eventID: event.id, sessionID: id, sessions: [recovered]))
                 finalSessions[id] = recovered
                 collected.liveSessionIDs.insert(id)
                 collected.collectionIssues.removeValue(forKey: id)
-            } catch { collected.collectionIssues[id] = error.localizedDescription }
+            } catch {
+                collected.collectionIssues[id] = error.localizedDescription
+                audit(ExecutionRecord(kind: "collection.target.failed", eventID: event.id, sessionID: id, message: error.localizedDescription))
+            }
         }
         sessions = Array(finalSessions.values).sorted { $0.updatedAt > $1.updatedAt }
+        var finalCollection = collected
+        finalCollection.sessions = sessions
+        auditCollection(finalCollection, kind: "collection.final", eventID: event.id)
         let plan = RuleEngine.plan(rules: eventRules, sessions: sessions)
         runMatched = plan.count
+        var planFields = ["count": String(plan.count)]
+        for item in plan { planFields["ruleFor." + item.session.id] = item.ruleID.uuidString }
+        audit(ExecutionRecord(kind: "plan.created", eventID: event.id, fields: planFields, sessions: plan.map(\.session), rules: eventRules))
         let plannedIDs = Set(plan.map(\.id))
         logs.append(AutomationLogEntry(kind: .info, message: LF("Collection: %d catalog, %d live, %d unresolved, %d planned", sessions.count, collected.liveSessionIDs.count, collected.collectionIssues.count, plan.count), eventID: event.id))
         for id in auditIDs.sorted() {
@@ -292,19 +347,30 @@ enum AppPage: String, CaseIterable {
         for item in plan {
             guard listener.phase == .executing, generation == listener.generation,
                   rules.contains(where: { $0.id == item.ruleID && $0.enabled && $0.action == item.action && $0.matches(item.session) }) else {
+                audit(ExecutionRecord(kind: "command.skipped", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID,
+                    fields: ["reason": "rule_changed_or_listener_stopped"]))
                 runFailed += 1
                 logs.append(AutomationLogEntry(kind: .skipped, message: "\(item.session.title) · Rule changed or monitoring paused", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
                 continue
             }
             if let reason = item.unavailableReason {
+                audit(ExecutionRecord(kind: "command.skipped", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID,
+                    message: reason, fields: ["reason": "control_unavailable"]))
                 runFailed += 1
                 logs.append(AutomationLogEntry(kind: .skipped, message: "\(item.session.title) · \(reason)", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
             } else {
                 do {
+                    audit(ExecutionRecord(kind: "command.started", eventID: event.id, sessionID: item.session.id,
+                        ruleID: item.ruleID, sessions: [item.session], rules: eventRules.filter { $0.id == item.ruleID }))
+                    await auditTask?.value
                     let receipt = try await backend.execute(action: item.action, session: item.session, matching: rules.first { $0.id == item.ruleID })
+                    audit(ExecutionRecord(kind: "command.acknowledged", eventID: event.id, sessionID: item.session.id,
+                        ruleID: item.ruleID, message: receipt.detail, fields: ["action": receipt.action, "completedAt": receipt.completedAt.ISO8601Format()]))
                     runSucceeded += 1
                     logs.append(AutomationLogEntry(kind: .succeeded, message: "\(item.session.title) · \(receipt.detail)", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
                 } catch {
+                    audit(ExecutionRecord(kind: "command.failed", eventID: event.id, sessionID: item.session.id,
+                        ruleID: item.ruleID, message: error.localizedDescription))
                     runFailed += 1
                     logs.append(AutomationLogEntry(kind: .failed, message: "\(item.session.title) · \(error.localizedDescription)", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
                 }
@@ -414,6 +480,40 @@ enum AppPage: String, CaseIterable {
             launchAtLogin = SMAppService.mainApp.status == .enabled
         } catch { errorMessage = error.localizedDescription; launchAtLogin = SMAppService.mainApp.status == .enabled }
     }
+    private func audit(_ value: ExecutionRecord) {
+        guard auditReady else { return }
+        auditSensitiveTexts.formUnion(rules.compactMap { rule in
+            if case .continueSession(let settings) = rule.action { return settings.effectivePrompt }; return nil
+        })
+        var record = value
+        record.runID = auditRunID
+        record.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+        record.sanitize(sensitiveTexts: Array(auditSensitiveTexts))
+        let previous = auditTask
+        auditTask = Task { [executionJournal, auditSystemLog] in
+            await previous?.value
+            do { try await executionJournal.append(record) }
+            catch { auditSystemLog.error("Execution log write failed: \(error.localizedDescription, privacy: .public)") }
+        }
+    }
+
+    private func auditCollection(_ snapshot: CodexSnapshot, kind: String, eventID: UUID?, only ids: Set<String>? = nil) {
+        let rows = snapshot.sessions.filter { ids?.contains($0.id) ?? true }
+        let chunks = max(1, (rows.count + 99) / 100)
+        for chunk in 0..<chunks {
+            let slice = Array(rows.dropFirst(chunk * 100).prefix(100))
+            var fields = ["collectedAt": snapshot.fetchedAt.ISO8601Format(), "catalogCount": String(snapshot.sessions.count),
+                "liveCount": String(snapshot.liveSessionIDs.count), "unresolvedCount": String(snapshot.collectionIssues.count),
+                "chunk": String(chunk + 1), "chunks": String(chunks)]
+            for session in slice {
+                if let issue = snapshot.collectionIssues[session.id] { fields["issue." + session.id] = issue }
+            }
+            var record = ExecutionRecord(kind: kind, eventID: eventID, fields: fields)
+            record.sessions = slice.map { AuditSession($0, liveConfirmed: snapshot.liveSessionIDs.contains($0.id)) }
+            audit(record)
+        }
+    }
+
     private var state: PersistentAppState { PersistentAppState(rules: rules, resetState: listener.detector.state, logs: Array(logs.suffix(500))) }
     private func persist() {
         guard persistenceReady else { return }
@@ -425,6 +525,7 @@ enum AppPage: String, CaseIterable {
         }
     }
     private func checkpoint() async -> Bool {
+        await auditTask?.value
         await saveTask?.value
         do { try await persistence.save(state); return true }
         catch { storageError = "Actions paused: cannot save reset checkpoint. \(error.localizedDescription)"; return false }
