@@ -43,10 +43,13 @@ public struct CodexSnapshot: Sendable {
     public var connection: CodexConnection
     public var fetchedAt: Date
     public var warnings: [String]
+    public var collectionIssues: [String: String]
+    public var liveSessionIDs: Set<String>
     public init(sessions: [Session], quota: QuotaSnapshot?, models: [CodexModel],
-                connection: CodexConnection, fetchedAt: Date = Date(), warnings: [String] = []) {
+                connection: CodexConnection, fetchedAt: Date = Date(), warnings: [String] = [], collectionIssues: [String: String] = [:], liveSessionIDs: Set<String> = []) {
         self.sessions = sessions; self.quota = quota; self.models = models
         self.connection = connection; self.fetchedAt = fetchedAt; self.warnings = warnings
+        self.collectionIssues = collectionIssues; self.liveSessionIDs = liveSessionIDs
     }
 }
 

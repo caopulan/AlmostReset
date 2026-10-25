@@ -124,11 +124,13 @@ enum AppPage: String, CaseIterable {
             resolvedCLIPath = try CodexService.resolveExecutable(cliPath.isEmpty ? nil : cliPath)
             let snapshot = try await backend.refresh()
             guard generation == connectionGeneration else { return }
+            let previousSessions = sessions
             sessions = snapshot.sessions
             let hasFreshQuota = quotaDisplay.receive(snapshot.quota)
             models = snapshot.models; connection = snapshot.connection
             if hasFreshQuota { lastUsageAndSessionsRefresh = snapshot.fetchedAt }
-            lastRefresh = snapshot.fetchedAt; warnings = snapshot.warnings; errorMessage = nil
+            lastRefresh = snapshot.fetchedAt; warnings = snapshot.warnings
+            errorMessage = snapshot.collectionIssues.isEmpty ? nil : LF("%d sessions have unconfirmed live state", snapshot.collectionIssues.count)
             connectionChecked = true
             guard hasFreshQuota, let freshQuota = snapshot.quota else {
                 errorMessage = snapshot.warnings.first(where: { $0.hasPrefix("Usage:") }) ?? L("Usage unavailable")
@@ -145,7 +147,7 @@ enum AppPage: String, CaseIterable {
             recoveryTask?.cancel(); recoveryTask = nil
             guard persistenceReady else { return }
             if let event = listener.observe(freshQuota) {
-                await executeReset(event)
+                await executeReset(event, previousSessions: previousSessions, snapshot: snapshot)
             } else if listener.isListening {
                 persist()
             }
@@ -211,13 +213,16 @@ enum AppPage: String, CaseIterable {
         persist()
     }
 
-    private func executeReset(_ event: QuotaResetEvent) async {
+    private func executeReset(_ event: QuotaResetEvent, previousSessions: [Session], snapshot: CodexSnapshot) async {
         isExecuting = true
         activeEventID = event.id
         let generation = listener.generation
         let backend = service
-        let plan = plannedActions
-        runMatched = plan.count
+        let eventRules = rules
+        var collected = snapshot
+        var auditIDs = SessionCollection.auditCandidates(rules: eventRules, previous: previousSessions, current: snapshot.sessions)
+        var recoveryIDs = Set(previousSessions.filter { session in eventRules.contains { $0.matches(session) } }.map(\.id))
+        recoveryIDs.formUnion(auditIDs.intersection(snapshot.collectionIssues.keys))
         defer {
             isExecuting = false; activeEventID = nil
             listener.finish(generation: generation)
@@ -228,6 +233,57 @@ enum AppPage: String, CaseIterable {
             return "\(window.current.limitID == "codex" ? window.current.friendlyName : window.current.displayName) \(before)% → \(after)%"
         }.joined(separator: "; ")
         logs.append(AutomationLogEntry(kind: .reset, message: "Quota increased · " + changes, eventID: event.id))
+        // Persist the consumed event before read-only recovery or any mutations.
+        guard await checkpoint() else { runFailed = 1; return }
+        if !collected.collectionIssues.isEmpty || !recoveryIDs.subtracting(collected.liveSessionIDs).isEmpty {
+            logs.append(AutomationLogEntry(kind: .info, message: LF("Collection incomplete: %d unresolved; rechecking before planning", collected.collectionIssues.count), eventID: event.id))
+            do {
+                let retry = try await backend.refreshForReset(accountID: event.accountID, sourceID: event.sourceID)
+                auditIDs.formUnion(SessionCollection.auditCandidates(rules: eventRules, previous: collected.sessions, current: retry.sessions))
+                collected = retry
+                recoveryIDs.formUnion(auditIDs.intersection(retry.collectionIssues.keys))
+            } catch {
+                logs.append(AutomationLogEntry(kind: .failed, message: L("Collection retry failed") + ": " + error.localizedDescription, eventID: event.id))
+                runFailed = 1; _ = await checkpoint(); return
+            }
+        }
+        var finalSessions = Dictionary(collected.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for session in previousSessions where auditIDs.contains(session.id) && finalSessions[session.id] == nil {
+            finalSessions[session.id] = SessionCollection.unavailable(session, previous: session, reason: "Session absent from refreshed catalog.")
+            collected.collectionIssues[session.id] = "Session absent from refreshed catalog."
+        }
+        let recoveryDeadline = Date().addingTimeInterval(30)
+        for id in recoveryIDs.subtracting(collected.liveSessionIDs).sorted() {
+            guard listener.phase == .executing, generation == listener.generation else { break }
+            guard Date() < recoveryDeadline else { collected.collectionIssues[id] = "Targeted collection recovery exceeded its time budget."; continue }
+            do {
+                let recovered = try await backend.resolve(deepLink: "codex://threads/" + id)
+                guard recovered.control.isAvailable else { throw CodexError.unavailable(recovered.control.unavailableReason ?? "No live owner") }
+                finalSessions[id] = recovered
+                collected.liveSessionIDs.insert(id)
+                collected.collectionIssues.removeValue(forKey: id)
+            } catch { collected.collectionIssues[id] = error.localizedDescription }
+        }
+        sessions = Array(finalSessions.values).sorted { $0.updatedAt > $1.updatedAt }
+        let plan = RuleEngine.plan(rules: eventRules, sessions: sessions)
+        runMatched = plan.count
+        let plannedIDs = Set(plan.map(\.id))
+        logs.append(AutomationLogEntry(kind: .info, message: LF("Collection: %d catalog, %d live, %d unresolved, %d planned", sessions.count, collected.liveSessionIDs.count, collected.collectionIssues.count, plan.count), eventID: event.id))
+        for id in auditIDs.sorted() {
+            guard let session = finalSessions[id] else { continue }
+            let config = [session.status.rawValue, session.model ?? "unknown", session.reasoning?.rawValue ?? "unknown", session.speed?.rawValue ?? "unknown"].joined(separator: " · ")
+            let excluded: String
+            if let rule = eventRules.first(where: { $0.enabled && $0.selector.matches(session) }), !rule.scope.includes(session) {
+                excluded = LF("Outside rule scope (%@): %@", rule.scope.rawValue, session.status.rawValue)
+            } else { excluded = L("Current settings no longer match the enabled rules") }
+            let reason = collected.collectionIssues[id] ?? (plannedIDs.contains(id) ? L("Included in reset plan") : excluded)
+            logs.append(AutomationLogEntry(kind: plannedIDs.contains(id) ? .info : .skipped,
+                message: session.title + " · " + config + " · " + reason, eventID: event.id, sessionID: id))
+        }
+        if !collected.collectionIssues.isEmpty {
+            runFailed += 1
+            logs.append(AutomationLogEntry(kind: .failed, message: LF("Live collection remains incomplete for %d sessions", collected.collectionIssues.count), eventID: event.id))
+        }
         for item in plan {
             logs.append(AutomationLogEntry(kind: .planned, message: "\(item.ruleName) → \(item.session.title)", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
         }
@@ -245,7 +301,7 @@ enum AppPage: String, CaseIterable {
                 logs.append(AutomationLogEntry(kind: .skipped, message: "\(item.session.title) · \(reason)", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
             } else {
                 do {
-                    let receipt = try await backend.execute(action: item.action, session: item.session)
+                    let receipt = try await backend.execute(action: item.action, session: item.session, matching: rules.first { $0.id == item.ruleID })
                     runSucceeded += 1
                     logs.append(AutomationLogEntry(kind: .succeeded, message: "\(item.session.title) · \(receipt.detail)", eventID: event.id, sessionID: item.session.id, ruleID: item.ruleID))
                 } catch {

@@ -9,6 +9,8 @@ public actor CodexService {
     private var shared = false
     private var modelCatalogFetchedAt: Date?
     private var lastAccountID: String?
+    private var knownDesktopSessions: [String: Session] = [:]
+    private var desktopObservedAt: [String: Date] = [:]
     private var lastConnection = CodexConnection(status: .disconnected, title: "Disconnected", detail: "Connect to local Codex.")
 
     public init(configuration: CodexConfiguration = .init()) { self.configuration = configuration }
@@ -18,15 +20,27 @@ public actor CodexService {
         catch { reader = nil; bridge = nil; throw error }
     }
 
-    private func refreshConnected(searchTerm: String?) throws -> CodexSnapshot {
+    /// Recollect sessions on the same service/source that produced the reset.
+    /// Do not require a second remote usage request or synthesize a quota reading.
+    public func refreshForReset(accountID: String, sourceID: String) async throws -> CodexSnapshot {
+        let actualSource = "local:" + URL(fileURLWithPath: configuration.codexHome).standardizedFileURL.path
+        guard sourceID == actualSource, accountID == lastAccountID else {
+            throw CodexError.unavailable("The reset account/source no longer matches this collection connection.")
+        }
+        return try refreshConnected(searchTerm: nil, includeQuota: false)
+    }
+
+    private func refreshConnected(searchTerm: String?, includeQuota: Bool = true) throws -> CodexSnapshot {
         try Task.checkCancellation()
         let client = try connectReader()
         var warnings: [String] = []
         var quota: QuotaSnapshot?
-        do {
-            quota = try readQuota(client)
-            if quota?.accountID != lastAccountID { catalog = []; lastAccountID = quota?.accountID }
-        } catch { warnings.append("Usage: \(error.localizedDescription)") }
+        if includeQuota {
+            do {
+                quota = try readQuota(client)
+                if quota?.accountID != lastAccountID { catalog = []; knownDesktopSessions = [:]; desktopObservedAt = [:]; lastAccountID = quota?.accountID }
+            } catch { warnings.append("Usage: \(error.localizedDescription)") }
+        }
         if catalog.isEmpty || Date().timeIntervalSince(modelCatalogFetchedAt ?? .distantPast) > 300 {
             do { catalog = try readModels(client); modelCatalogFetchedAt = Date() }
             catch { warnings.append("Models: \(error.localizedDescription)") }
@@ -46,22 +60,41 @@ public actor CodexService {
             cursor = page.string("nextCursor")
             if let cursor, !seen.insert(cursor).inserted { throw CodexError.protocolError("Codex repeated a thread-list cursor.") }
         } while cursor != nil
-        var owners: [String: String] = [:]
-        if let bridge {
-            do { owners = try bridge.owners(of: threads.compactMap { $0.string("id") }) }
-            catch { warnings.append("Live discovery: \(error.localizedDescription)"); self.bridge = nil }
-        }
+        threads = Self.uniqueCatalog(threads)
+        knownDesktopSessions = knownDesktopSessions.filter { Date().timeIntervalSince(desktopObservedAt[$0.key] ?? .distantPast) < 1800 }
+        desktopObservedAt = desktopObservedAt.filter { knownDesktopSessions[$0.key] != nil }
         var sessions = threads.map(Self.decodeThread)
-        var bridgeFailures = 0
+        let listedIDs = Set(sessions.map(\.id))
+        // A live thread can temporarily be absent from the state DB listing.
+        sessions += knownDesktopSessions.values.filter { !listedIDs.contains($0.id) && $0.isRecentOrRunning() }
+        var owners: [String: String] = [:]
+        var issues: [String: String] = [:]
+        var liveIDs = Set<String>()
         if let bridge {
-            let indices = sessions.enumerated().reduce(into: [String: Int]()) { $0[$1.element.id] = $1.offset }
             do {
-                let missing = try bridge.snapshots(owners: owners) { id, state in
-                    if let index = indices[id] { sessions[index] = Self.decodeDesktop(state, fallback: sessions[index]) }
+                owners = try bridge.owners(of: sessions.map(\.id))
+                issues = bridge.collectionIssues
+            } catch {
+                warnings.append("Live discovery: \(error.localizedDescription)")
+                for session in sessions { issues[session.id] = "Live discovery failed: " + error.localizedDescription }
+                self.bridge = nil
+            }
+        }
+        if let bridge {
+            let indices = Dictionary(sessions.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+            do {
+                _ = try bridge.snapshots(owners: owners) { id, state in
+                    if let index = indices[id] {
+                        sessions[index] = Self.decodeDesktop(state, fallback: sessions[index])
+                        liveIDs.insert(id)
+                        knownDesktopSessions[id] = sessions[index]
+                        desktopObservedAt[id] = Date()
+                    }
                 }
-                bridgeFailures = missing.count
+                issues.merge(bridge.collectionIssues, uniquingKeysWith: { _, new in new })
             } catch {
                 warnings.append("Live snapshots: \(error.localizedDescription)")
+                for id in owners.keys where !liveIDs.contains(id) { issues[id] = "Live snapshot failed: " + error.localizedDescription }
                 self.bridge = nil
             }
         } else if shared {
@@ -75,11 +108,27 @@ public actor CodexService {
                     canSendPrompt: thread["canAcceptDirectInput"] as? Bool != false)
             }
         }
-        if bridgeFailures > 0 { warnings.append("Live state unavailable for \(bridgeFailures) sessions. Their actions are disabled."); self.bridge = nil }
+        if configuration.useDesktopBridge && !shared && bridge == nil {
+            for session in sessions where !liveIDs.contains(session.id) {
+                issues[session.id] = issues[session.id] ?? "Desktop connection unavailable; live state is unknown."
+            }
+        }
+        if !shared {
+            for index in sessions.indices where !liveIDs.contains(sessions[index].id) {
+                let id = sessions[index].id
+                if let previous = knownDesktopSessions[id], previous.status.isActive {
+                    issues[id] = issues[id] ?? "Previously observed session has no confirmed live owner or snapshot."
+                }
+                if let reason = issues[id] {
+                    sessions[index] = SessionCollection.unavailable(sessions[index], previous: knownDesktopSessions[id], reason: reason)
+                }
+            }
+        } else { liveIDs = Set(sessions.filter { $0.control.isAvailable }.map(\.id)) }
+        if !issues.isEmpty { warnings.append("Live collection incomplete for \(issues.count) sessions; unresolved sessions will be rechecked before reset actions.") }
         lastConnection = CodexConnection(status: shared ? .sharedServer : (bridge == nil ? .readOnly : .desktop),
             title: shared ? "Shared App Server" : (bridge == nil ? "Codex · Read only" : "Codex Desktop"),
             detail: shared ? "Connected to the configured control socket." : (bridge == nil ? "Usage and saved sessions are available. Open Codex Desktop to control its sessions." : "Connected through the local Desktop bridge. Protocol compatibility is checked on every request."))
-        return CodexSnapshot(sessions: sessions, quota: quota, models: catalog, connection: lastConnection, warnings: warnings)
+        return CodexSnapshot(sessions: sessions, quota: quota, models: catalog, connection: lastConnection, warnings: warnings, collectionIssues: issues, liveSessionIDs: liveIDs)
     }
 
     /// Search only the session catalog; typing never performs an account or model refresh.
@@ -133,12 +182,12 @@ public actor CodexService {
         try await execute(action: planned.action, session: planned.session)
     }
 
-    public func execute(action: SessionAction, session: Session) async throws -> CodexActionReceipt {
-        do { return try executeConnected(action: action, session: session) }
+    public func execute(action: SessionAction, session: Session, matching rule: AutomationRule? = nil) async throws -> CodexActionReceipt {
+        do { return try executeConnected(action: action, session: session, matching: rule) }
         catch { reader = nil; bridge = nil; throw error }
     }
 
-    private func executeConnected(action: SessionAction, session: Session) throws -> CodexActionReceipt {
+    private func executeConnected(action: SessionAction, session: Session, matching rule: AutomationRule?) throws -> CodexActionReceipt {
         let client = try connectReader()
         // Never trust a cached ownership claim when an automation fires.
         if !shared {
@@ -152,6 +201,7 @@ public actor CodexService {
             guard current.control.canSendPrompt || current.control.canInterrupt else {
                 throw CodexError.unavailable(current.control.unavailableReason ?? "This session is not controllable.")
             }
+            if let rule, !rule.matches(current) { throw CodexError.unavailable("The live session no longer matches the rule.") }
             try Self.checkPlannedTurn(session, current)
             switch action {
             case .stop:
@@ -173,6 +223,7 @@ public actor CodexService {
             throw CodexError.unavailable("This session is not loaded by the connected App Server. AlmostReset will not claim another server's session.")
         }
         let current = Self.decodeThread(thread)
+        if let rule, !rule.matches(current) { throw CodexError.unavailable("The live session no longer matches the rule.") }
         try Self.checkPlannedTurn(session, current)
         switch action {
         case .stop:
@@ -338,6 +389,12 @@ public actor CodexService {
         case "ultrafast", "ultra_fast", "ultra-fast": return .ultrafast
         default: return nil
         }
+    }
+
+    static func uniqueCatalog(_ threads: [[String: Any]]) -> [[String: Any]] {
+        Array(Dictionary(threads.map { ($0.string("id") ?? "", $0) }, uniquingKeysWith: { a, b in
+            (b.number("updatedAt") ?? 0) > (a.number("updatedAt") ?? 0) ? b : a
+        }).values).filter { !($0.string("id") ?? "").isEmpty }.sorted { ($0.number("updatedAt") ?? 0) > ($1.number("updatedAt") ?? 0) }
     }
 
     static func decodeThread(_ thread: [String: Any]) -> Session {

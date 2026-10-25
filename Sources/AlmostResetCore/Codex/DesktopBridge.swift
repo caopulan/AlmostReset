@@ -6,6 +6,7 @@ import Foundation
 final class DesktopBridge {
     private let transport: JSONTransport
     private var clientID = "initializing-client"
+    private(set) var collectionIssues: [String: String] = [:]
     init(home: String) throws {
         transport = try JSONTransport(socketPath: URL(fileURLWithPath: home).appendingPathComponent("ipc/ipc.sock").path)
         let response = try request("initialize", version: 0, params: ["clientType": "AlmostReset"])
@@ -21,45 +22,43 @@ final class DesktopBridge {
     /// Discovery requests are independent; batch them so thousands of saved sessions
     /// do not incur one full desktop event-loop round trip each.
     func owners(of threadIDs: [String]) throws -> [String: String] {
-        var owners: [String: String] = [:]
+        collectionIssues = [:]
         var pending: [String: String] = [:]
         for threadID in threadIDs {
             let requestID = UUID().uuidString
             pending[requestID] = threadID
             try transport.send(["type": "request", "requestId": requestID, "sourceClientId": clientID,
-                "method": "thread-owner-discovery", "version": 1, "timeoutMs": 1500,
+                "method": "thread-owner-discovery", "version": 1, "timeoutMs": 10_000,
                 "params": ["hostId": "local", "conversationId": threadID]])
         }
-        // The router waits ten seconds for unresponsive peer clients even when the
-        // owner has already answered other requests. Only positive ownership replies
-        // grant control; missing replies leave sessions read-only.
-        let deadline = Date().addingTimeInterval(3)
-        while !pending.isEmpty {
+        // Wait through the router's ten-second discovery window. A missing reply
+        // is not evidence that a thread has no owner.
+        var discovery = DesktopOwnerDiscovery(pending: pending)
+        let deadline = Date().addingTimeInterval(12)
+        while !discovery.pending.isEmpty {
             let response: [String: Any]
             do { response = try transport.receive(deadline: deadline) }
             catch CodexError.timeout { break }
             if try respondToDiscovery(response) { continue }
-            guard let requestID = response.string("requestId"), let threadID = pending.removeValue(forKey: requestID) else { continue }
-            if response.string("resultType") == "success", response.string("method") == "thread-owner-discovery",
-               let owner = response.string("handledByClientId") { owners[threadID] = owner }
-            else if response.string("error") != "no-client-found" {
-                throw CodexError.protocolError("Codex Desktop owner discovery is incompatible: \(response.string("error") ?? "unknown response")")
-            }
+            discovery.receive(response)
         }
-        return owners
+        discovery.finish()
+        collectionIssues.merge(discovery.issues, uniquingKeysWith: { _, new in new })
+        return discovery.owners
     }
 
     func snapshots(owners: [String: String], onSnapshot: (String, [String: Any]) -> Void) throws -> Set<String> {
         guard !owners.isEmpty else { return [] }
-        var synchronized = Set<String>()
-        for (threadID, owner) in owners where synchronized.insert(owner).inserted {
+        let synchronization = DesktopOwnerSynchronization.collect(owners: owners) { threadID, owner in
             _ = try request("thread-follower-read-model-settings", version: 1,
                             params: ["conversationId": threadID], target: owner)
         }
-        for (threadID, owner) in owners { try follow(threadID: threadID, owner: owner, following: true) }
-        defer { for (threadID, owner) in owners { try? follow(threadID: threadID, owner: owner, following: false) } }
-        var pending = Set(owners.keys)
-        let deadline = Date().addingTimeInterval(10)
+        let ready = synchronization.ready
+        collectionIssues.merge(synchronization.issues, uniquingKeysWith: { _, new in new })
+        for (threadID, owner) in ready { try follow(threadID: threadID, owner: owner, following: true) }
+        defer { for (threadID, owner) in ready { try? follow(threadID: threadID, owner: owner, following: false) } }
+        var pending = Set(ready.keys)
+        let deadline = Date().addingTimeInterval(12)
         while !pending.isEmpty {
             let event: [String: Any]
             do { event = try transport.receive(deadline: deadline) }
@@ -70,12 +69,18 @@ final class DesktopBridge {
                   let threadID = params.string("conversationId"), pending.contains(threadID),
                   event.string("sourceClientId") == owners[threadID], params.object("change").string("type") == "snapshot" else { continue }
             let state = params.object("change").object("conversationState")
-            guard state.string("id") == threadID else { throw CodexError.protocolError("Codex Desktop returned a mismatched session snapshot.") }
+            guard state.string("id") == threadID else {
+                collectionIssues[threadID] = "Codex Desktop returned a mismatched session snapshot."
+                pending.remove(threadID)
+                continue
+            }
             pending.remove(threadID)
+            collectionIssues.removeValue(forKey: threadID)
             // The caller extracts metadata immediately; conversation content is never persisted.
             onSnapshot(threadID, state)
         }
-        return pending
+        for threadID in pending { collectionIssues[threadID] = "Live snapshot timed out; state is unknown." }
+        return Set(owners.keys).subtracting(ready.keys).union(pending)
     }
 
     func snapshot(threadID: String, owner: String) throws -> [String: Any] {
