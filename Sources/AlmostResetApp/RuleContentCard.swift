@@ -8,19 +8,17 @@ struct RuleContentCard: View {
     let edit: () -> Void
     let delete: () -> Void
     @State private var now = Date()
-    @State private var hovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var matches: [Session] { RuleInspection.sessions(for: rule.selector, in: app.sessions, now: now) }
     private var reference: String { LF("Rule %d", index + 1) }
     var body: some View {
         HStack(alignment: .top, spacing: 15) {
             VStack(spacing: 11) {
-                Text(String(format: "%02d", index + 1)).font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 24)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
+                Text("\(index + 1)").font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(index == 0 ? Color.accent : .secondary)
+                    .frame(width: 28, height: 28)
+                    .background(index == 0 ? Color.accent.opacity(0.10) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
             }.padding(.top, 1)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 13) {
                 HStack(alignment: .top, spacing: 18) {
                     selectorRows.frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 12) {
@@ -31,12 +29,9 @@ struct RuleContentCard: View {
                     }.padding(.top, 2)
                 }
                 HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: rule.action.isStop ? "stop.fill" : "arrow.turn.down.right").font(.system(size: 9))
-                        Text(rule.action.title).font(.system(size: 11, weight: .medium))
-                    }.foregroundStyle(rule.action.isStop ? Color.red.opacity(0.85) : Color.accent)
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background((rule.action.isStop ? Color.red : Color.accent).opacity(0.055), in: RoundedRectangle(cornerRadius: 5))
+                    Image(systemName: rule.action.isStop ? "stop.fill" : "arrow.turn.down.right").font(.system(size: 10))
+                        .foregroundStyle(rule.action.isStop ? Color.red.opacity(0.75) : Color.accent)
+                    Text(rule.action.title).font(.system(size: 11, weight: .medium))
                     if case .continueSession(let settings) = rule.action {
                         let summary = [settings.model, settings.reasoning?.rawValue, settings.speed?.displayTitle].compactMap { $0 }.joined(separator: " · ")
                         if !summary.isEmpty { Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2) }
@@ -48,19 +43,16 @@ struct RuleContentCard: View {
                         .buttonStyle(.plain).foregroundStyle(.secondary).help(L("Delete")).accessibilityLabel(L("Delete") + " " + reference)
                 }.padding(.top, 10).overlay(alignment: .top) { Rectangle().fill(Color.line).frame(height: 1) }
             }
-        }.padding(16)
+        }.padding(18)
             .background(Color.panel, in: RoundedRectangle(cornerRadius: 13))
-            .overlay(RoundedRectangle(cornerRadius: 13).stroke(hovered ? Color.primary.opacity(0.14) : Color.line))
-            .shadow(color: Color.black.opacity(hovered ? 0.035 : 0.012), radius: 7, y: 2)
-            .onHover { hovered = $0 }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovered)
-            .opacity(rule.enabled ? 1 : 0.65)
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(index == 0 && rule.enabled ? Color.accent.opacity(0.22) : Color.line))
+            .opacity(rule.enabled ? 1 : 0.72)
             .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { now = $0 }
     }
     @ViewBuilder private var selectorRows: some View {
         switch rule.selector {
         case .sessions(let ids):
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(NSOrderedSet(array: ids).array.compactMap { $0 as? String }), id: \.self) { id in
                     let session = app.sessions.first { $0.id == id }
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -70,11 +62,11 @@ struct RuleContentCard: View {
                         Text(session.map { $0.title.isEmpty ? L("Untitled session") : $0.title } ?? (L("Unavailable session") + " · " + String(id.prefix(8))))
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                    }.padding(.vertical, 2)
+                    }.padding(.vertical, 3)
                 }
             }
         case .conditions(let match, let conditions):
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(conditions.enumerated()), id: \.element.id) { row, condition in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         if conditions.count > 1 {
@@ -88,7 +80,7 @@ struct RuleContentCard: View {
                         Text(condition.values.map { conditionValue($0, field: condition.field) }.joined(separator: ", "))
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                    }.padding(.vertical, 2)
+                    }.padding(.vertical, 3)
                 }
             }
         }
