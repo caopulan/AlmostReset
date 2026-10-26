@@ -5,8 +5,8 @@ struct MainWindow: View {
     @EnvironmentObject var app: AppModel
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 30) {
-                BrandMark(size: 82).frame(maxWidth: .infinity).padding(.top, 26).padding(.bottom, 4)
+            VStack(alignment: .leading, spacing: 28) {
+                BrandMark(size: 48).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26).padding(.top, 28).padding(.bottom, 6)
                 VStack(spacing: 5) {
                     ForEach(AppPage.allCases, id: \.self) { page in
                         Button { app.page = page } label: {
@@ -15,16 +15,18 @@ struct MainWindow: View {
                                 Text(L(page.rawValue)).font(.system(size: 13, weight: app.page == page ? .semibold : .regular))
                                 Spacer()
                             }.foregroundStyle(app.page == page ? Color.accent : Color.primary.opacity(0.8))
-                                .padding(.horizontal, 14).padding(.vertical, 11)
-                                .background(app.page == page ? Color.accent.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
+                                .padding(.horizontal, 12).padding(.vertical, 10)
+                                .background(app.page == page ? Color.accent.opacity(0.075) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(alignment: .leading) {
+                                    if app.page == page { Capsule().fill(Color.accent).frame(width: 3, height: 16) }
+                                }
                         }.buttonStyle(.plain)
                     }
                 }.padding(.horizontal, 12)
                 Spacer()
-            }.frame(width: 192).background(Color.primary.opacity(0.025))
+            }.frame(width: 164).background(Color.primary.opacity(0.018))
             Rectangle().fill(Color.line).frame(width: 1)
             VStack(spacing: 22) {
-                if app.page == .rules { MonitorStatusBar() }
                 if let error = app.storageError ?? app.errorMessage {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
@@ -41,7 +43,7 @@ struct MainWindow: View {
                     case .settings: SettingsPage()
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            }.padding(26)
+            }.padding(28).frame(maxWidth: app.page == .rules ? 1060 : .infinity).frame(maxWidth: .infinity)
         }.background(Color.canvas).frame(minWidth: 980, minHeight: 680)
     }
 }
@@ -81,14 +83,15 @@ struct RulesView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var deleteRule: AutomationRule?
     var body: some View {
-        VStack(alignment: .leading, spacing: 26) {
-            HStack(spacing: 18) {
-                Text(L("Rules")).font(.system(size: 27, weight: .semibold))
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 14) {
+                Text(L("Rules")).font(.system(size: 23, weight: .semibold))
                 Text(L("In priority order")).font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 RulePlanBadge()
                 NewRuleButton { creationKind = $0 }.disabled(!app.canEditRules)
             }
+            MonitorStatusBar()
             if app.rules.isEmpty {
                 VStack(spacing: 18) {
                     Image(systemName: "list.bullet.rectangle").font(.system(size: 32, weight: .light)).foregroundStyle(.tertiary)
@@ -98,7 +101,7 @@ struct RulesView: View {
             } else {
                 ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: 10) {
                         ForEach(Array(app.rules.enumerated()), id: \.element.id) { index, rule in
                             RuleContentCard(rule: rule, index: index, edit: { editRule = rule }, delete: { deleteRule = rule })
                                 .id(rule.id)

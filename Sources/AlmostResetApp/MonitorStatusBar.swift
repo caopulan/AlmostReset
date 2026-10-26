@@ -41,15 +41,21 @@ struct MonitorStatusBar: View {
                         impactView
                     }.padding(22).frame(width: app.mainWindows.count > 1 ? 420 : 320)
                 } else {
-                    HStack(spacing: 22) {
-                        quotaView.frame(width: app.mainWindows.count > 1 ? 290 : 240)
-                        Rectangle().fill(Color.line).frame(width: 1, height: 66)
-                        impactView.frame(maxWidth: .infinity)
-                        Rectangle().fill(Color.line).frame(width: 1, height: 66)
-                        VStack(alignment: .center, spacing: 9) { control; stateView }
-                            .padding(.trailing, 18)
-                    }.padding(20)
-                        .overlay(alignment: .bottomTrailing) { refreshButton.padding(.trailing, 9).padding(.bottom, 20) }
+                    HStack(spacing: 24) {
+                        quotaView.frame(width: app.mainWindows.count > 1 ? 210 : 156)
+                        Rectangle().fill(Color.line).frame(width: 1, height: 68)
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            impactView.frame(maxWidth: 320)
+                            Spacer(minLength: 0)
+                        }.frame(maxWidth: .infinity)
+                        Rectangle().fill(Color.line).frame(width: 1, height: 68)
+                        VStack(spacing: 10) {
+                            control
+                            HStack(spacing: 12) { stateView; refreshButton }
+                        }.frame(width: 156)
+                    }.padding(.horizontal, 24).padding(.vertical, 22)
+
                 }
             }
         }.task { if portrait { await app.refresh() } }
@@ -70,38 +76,43 @@ struct MonitorStatusBar: View {
     }
     private func quotaRing(_ percent: Double?, label: String) -> some View {
         ZStack {
-            Circle().stroke(Color.primary.opacity(0.065), lineWidth: 7)
+            Circle().stroke(Color.primary.opacity(0.065), lineWidth: 5)
             Circle().trim(from: 0, to: CGFloat(min(100, max(0, percent ?? 0))) / 100)
-                .stroke(Color.accent, style: StrokeStyle(lineWidth: 7, lineCap: .round)).rotationEffect(.degrees(-90))
+                .stroke(Color.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90))
             VStack(spacing: 3) {
                 Text(percent.map { $0.formatted(.number.precision(.fractionLength(0...1))) + "%" } ?? "—")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .font(.system(size: 25, weight: .semibold, design: .rounded)).monospacedDigit()
                 Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
             }.padding(.horizontal, 6)
-        }.frame(width: 88, height: 88).padding(4)
+        }.frame(width: portrait ? 88 : 84, height: portrait ? 88 : 84).padding(4)
     }
     private var impactView: some View {
-        VStack(alignment: portrait ? .center : .leading, spacing: 12) {
+        VStack(alignment: .center, spacing: 12) {
             GeometryReader { geo in
                 HStack(spacing: 0) {
                     Color.red.opacity(0.65).frame(width: geo.size.width * Double(impact.stopped) / Double(max(1, impact.total)))
                     Color.teal.frame(width: geo.size.width * Double(impact.continued) / Double(max(1, impact.total)))
                     Color.primary.opacity(0.12)
                 }.clipShape(Capsule())
-            }.frame(height: portrait ? 12 : 7)
-            HStack(spacing: 10) {
-                legend("Stop", impact.stopped, .red.opacity(0.65))
-                legend("Resume", impact.continued, .teal)
-                legend("Unaffected", impact.unaffected, .secondary.opacity(0.5))
-            }.font(.system(size: 10)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: portrait ? .center : .leading)
+            }.frame(height: portrait ? 8 : 6)
+            HStack(spacing: 0) {
+                impactMetric("Stop", impact.stopped, Color.red.opacity(0.65))
+                impactMetric("Resume", impact.continued, .teal)
+                impactMetric("Unaffected", impact.unaffected, .secondary.opacity(0.5))
+            }
             Text(LF("%d rules · %d affected", app.rules.count, impact.affected))
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: portrait ? .center : .leading)
+                .font(.system(size: 10)).foregroundStyle(.secondary.opacity(0.75))
+                .frame(maxWidth: .infinity, alignment: .center)
         }.help(L("Running + recent 30 min") + " · " + L("In priority order"))
     }
-    private func legend(_ label: String, _ count: Int, _ color: Color) -> some View {
-        HStack(spacing: 4) { Circle().fill(color).frame(width: 5, height: 5); Text(L(label) + " \(count)").lineLimit(1) }
+    private func impactMetric(_ label: String, _ count: Int, _ color: Color) -> some View {
+        VStack(spacing: 4) {
+            Text("\(count)").font(.system(size: 19, weight: .medium, design: .rounded)).monospacedDigit()
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(L(label)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.85)
+            }
+        }.frame(maxWidth: .infinity)
     }
     private var stateView: some View {
         VStack(alignment: .center, spacing: 4) {
@@ -126,7 +137,7 @@ struct MonitorStatusBar: View {
                 Image(systemName: app.listener.isListening ? "stop.fill" : "play.fill")
                 Text(L(app.isExecuting ? "Executing" : app.listener.isListening ? "Stop listening" : "Start"))
             }.font(.system(size: 13, weight: .semibold))
-                .frame(maxWidth: portrait ? .infinity : nil).frame(width: portrait ? nil : 126, height: 42)
+                .frame(maxWidth: portrait ? .infinity : nil).frame(width: portrait ? nil : 144, height: 36)
                 .foregroundStyle(.white).background(Color.accent, in: RoundedRectangle(cornerRadius: 10))
         }.buttonStyle(.plain).disabled(app.isExecuting || (!app.listener.isListening && !app.canStart))
             .opacity(app.canStart || app.listener.isListening ? 1 : 0.5)

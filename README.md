@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/caopulan/AlmostReset/releases/latest"><img src="https://img.shields.io/badge/版本-0.8.2-E65A28" alt="版本 0.8.2"></a>
+  <a href="https://github.com/caopulan/AlmostReset/releases/latest"><img src="https://img.shields.io/badge/版本-0.9.0-E65A28" alt="版本 0.9.0"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-555555" alt="macOS 14 及以上">
   <img src="https://img.shields.io/badge/架构-Apple%20Silicon-555555" alt="Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/协议-MIT-555555" alt="MIT 协议"></a>
@@ -49,7 +49,7 @@ AlmostReset 当前是一款面向 **Codex** 的独立 macOS 应用。你在 Code
 
 ## 📦 安装
 
-从 [GitHub Releases](https://github.com/caopulan/AlmostReset/releases/latest) 下载 **AlmostReset-0.8.2-macOS-arm64.dmg**，打开后将 **AlmostReset.app** 拖入 **Applications**。
+从 [GitHub Releases](https://github.com/caopulan/AlmostReset/releases/latest) 下载 **AlmostReset-0.9.0-macOS-arm64.dmg**，打开后将 **AlmostReset.app** 拖入 **Applications**。
 
 需要 **macOS 14 或更高版本、Apple Silicon Mac**，以及已安装并登录的 Codex CLI。控制 Codex 桌面端会话时，请保持 Codex 桌面应用运行。应用会自动寻找 CLI；设置页显示连接成功后，无需手动选择路径。
 
