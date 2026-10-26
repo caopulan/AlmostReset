@@ -6,16 +6,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <link>https://github.com/caopulan/AlmostReset/releases</link>
     <description>AlmostReset 正式版更新</description>
     <item>
-      <title>AlmostReset 0.8.2</title>
-      <pubDate>Sun, 25 Oct 2026 08:08:40 GMT</pubDate>
-      <sparkle:version>15</sparkle:version>
-      <sparkle:shortVersionString>0.8.2</sparkle:shortVersionString>
+      <title>AlmostReset 0.9.0</title>
+      <pubDate>Mon, 26 Oct 2026 17:04:48 GMT</pubDate>
+      <sparkle:version>16</sparkle:version>
+      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <description>AlmostReset 0.8.2：更新详情见 GitHub Releases。</description>
-      <enclosure url="https://github.com/caopulan/AlmostReset/releases/download/v0.8.2/AlmostReset-0.8.2-macOS-arm64.zip" length="3723076" type="application/octet-stream" sparkle:edSignature="9/EWBFIQfpi/pT+5ATUCs0WX/dqJy3xf8Qliw6uzEYEOQGdU2SV6RdveNC2D0s5Eic2uEmx3gs2q0dIixancBg=="></enclosure>
+      <description>AlmostReset 0.9.0：更新详情见 GitHub Releases。</description>
+      <enclosure url="https://github.com/caopulan/AlmostReset/releases/download/v0.9.0/AlmostReset-0.9.0-macOS-arm64.zip" length="3734064" type="application/octet-stream" sparkle:edSignature="666odlenRndItkhWC+XAqXpOAVc43aPiVIPedvyTjcc63RrMBuxh/92jXHNrTKym1Qx1Y3P3Y2NMW9kVbHKsAg=="></enclosure>
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: GeXuF8bvhHuWROM3kjaZhkk+DTvLF7iXB5x/xg7TRLJnEylC0B3YX9DWRHMf/EaHZlyJwk2IyW0XMNHiI8eGAg==
+edSignature: XHclGwSi9Q93feeOmFex7Zkf2fUulwqpJDdYTrihzLdnaQVdDezK0NxXY1I4UXRZE5Y677ZB+/0H//0vMSddAg==
 length: 1251
 -->
